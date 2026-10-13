@@ -1,0 +1,12 @@
+# The core pipeline (in-memory storage + BM25 + fusion + prompt building) is
+# dependency-free. Install only the extras your deployment actually uses:
+
+# --- PostgreSQL backend (pgvector + tsvector) ---
+asyncpg>=0.29.0
+pgvector>=0.3.0
+
+# --- Managed Cohere reranking ---
+httpx>=0.27.0
+
+# --- Local HuggingFace cross-encoder reranking + SBERT embeddings ---
+sentence-transformers>=3.0.0
