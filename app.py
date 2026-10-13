@@ -7,6 +7,11 @@ Runs dependency-free by default (in-memory storage + term-overlap reranker):
     python app.py --reranker cohere            # managed API (needs COHERE_API_KEY)
     python app.py --storage postgres           # pgvector + tsvector (needs DATABASE_URL)
     python app.py --query "when is a SEV1 declared?"
+
+Configuration is externalized into a `.env` file (copy `.env.example`): every
+flag below has an env default (RAGRAM_STORAGE, RAGRAM_RERANKER, RAGRAM_TOP_N,
+...) and backend keys/models live there too (DATABASE_URL, OPENAI_API_KEY,
+OLLAMA_HOST, ...). Command-line flags still override the env defaults.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import sys
 from config import FusionConfig
 from embedding import Embedder, HashingEmbedder, SentenceTransformerEmbedder
 from engine import RagramFusionEngine
+from envfile import env_float, env_int, env_str, load_env
 from models import Chunk
 from rerank import CohereReranker, CrossEncoderReranker, Reranker, TermOverlapReranker
 from storage import InMemoryStorageEngine, PostgresStorageEngine, StorageEngine
@@ -152,9 +158,11 @@ def build_storage(choice: str, *, dimensions: int) -> StorageEngine:
 
 def build_embedder(choice: str) -> Embedder:
     if choice == "hashing":
-        return HashingEmbedder(dimensions=256)
+        return HashingEmbedder(dimensions=env_int("RAGRAM_EMBEDDER_DIMENSIONS", 256))
     if choice == "sbert":
-        return SentenceTransformerEmbedder()
+        return SentenceTransformerEmbedder(
+            env_str("RAGRAM_EMBEDDER_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+        )
     raise SystemExit(f"unknown embedder: {choice!r}")
 
 
@@ -163,7 +171,7 @@ def build_reranker(choice: str) -> Reranker:
         LOGGER.warning("using TermOverlapReranker (demo only); pass --reranker hf for production")
         return TermOverlapReranker()
     if choice == "hf":
-        return CrossEncoderReranker("BAAI/bge-reranker-base")
+        return CrossEncoderReranker(env_str("RAGRAM_RERANKER_MODEL", "BAAI/bge-reranker-base"))
     if choice == "cohere":
         return CohereReranker()
     raise SystemExit(f"unknown reranker: {choice!r}")
@@ -256,31 +264,47 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--storage",
         choices=("memory", "postgres"),
-        default="memory",
-        help="storage backend (postgres needs DATABASE_URL)",
+        default=env_str("RAGRAM_STORAGE", "memory"),
+        help="storage backend (postgres needs DATABASE_URL); env: RAGRAM_STORAGE",
     )
     parser.add_argument(
         "--embedder",
         choices=("hashing", "sbert"),
-        default="hashing",
-        help="hashing = dependency-free demo embedder, sbert = sentence-transformers",
+        default=env_str("RAGRAM_EMBEDDER", "hashing"),
+        help="hashing = dependency-free demo embedder, sbert = sentence-transformers; env: RAGRAM_EMBEDDER",
     )
     parser.add_argument(
         "--reranker",
         choices=("noop", "hf", "cohere"),
-        default="noop",
-        help="noop = term overlap (demo), hf = local cross-encoder, cohere = managed API",
+        default=env_str("RAGRAM_RERANKER", "noop"),
+        help="noop = term overlap (demo), hf = local cross-encoder, cohere = managed API; env: RAGRAM_RERANKER",
     )
-    parser.add_argument("--fusion", choices=("rrf", "normalized"), default="rrf")
-    parser.add_argument("--rrf-k", type=int, default=60)
-    parser.add_argument("--candidate-limit", type=int, default=25)
-    parser.add_argument("--threshold", type=float, default=0.3)
-    parser.add_argument("--top-n", type=int, default=4)
+    parser.add_argument(
+        "--fusion",
+        choices=("rrf", "normalized"),
+        default=env_str("RAGRAM_FUSION", "rrf"),
+        help="env: RAGRAM_FUSION",
+    )
+    parser.add_argument("--rrf-k", type=int, default=env_int("RAGRAM_RRF_K", 60), help="env: RAGRAM_RRF_K")
+    parser.add_argument(
+        "--candidate-limit",
+        type=int,
+        default=env_int("RAGRAM_CANDIDATE_LIMIT", 25),
+        help="env: RAGRAM_CANDIDATE_LIMIT",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=env_float("RAGRAM_THRESHOLD", 0.3),
+        help="env: RAGRAM_THRESHOLD",
+    )
+    parser.add_argument("--top-n", type=int, default=env_int("RAGRAM_TOP_N", 4), help="env: RAGRAM_TOP_N")
     parser.add_argument("--query", action="append", help="repeat for multiple queries")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env()  # externalized defaults: .env / $RAGRAM_ENV_FILE (shell env wins)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",

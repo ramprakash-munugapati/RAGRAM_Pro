@@ -6,7 +6,9 @@ Run with:  python tests/test_pipeline.py
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -248,12 +250,91 @@ async def test_prompt_package() -> None:
     check("insufficiency policy in system prompt", "Insufficient evidence" in prompt.system)
 
 
+def test_envfile() -> None:
+    print("[envfile]")
+    from envfile import env_float, env_int, env_str, load_env
+
+    keys = (
+        "RAGRAM_TEST_EXPORTED",
+        "RAGRAM_TEST_QUOTED",
+        "RAGRAM_TEST_SINGLE",
+        "RAGRAM_TEST_INLINE",
+        "RAGRAM_TEST_NUMERIC",
+        "RAGRAM_TEST_FLOATY",
+        "RAGRAM_TEST_PRESET",
+        "RAGRAM_TEST_BLANK",
+        "RAGRAM_TEST_BAD",
+    )
+    saved = {key: os.environ.get(key) for key in keys}
+    try:
+        for key in keys:
+            os.environ.pop(key, None)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.env"
+            path.write_text(
+                "# comment line\n"
+                "export RAGRAM_TEST_EXPORTED=exported\n"
+                'RAGRAM_TEST_QUOTED="has spaces and # hash"\n'
+                "RAGRAM_TEST_SINGLE='raw # value'\n"
+                "RAGRAM_TEST_INLINE=value  # trailing comment\n"
+                "RAGRAM_TEST_NUMERIC=42\n"
+                "RAGRAM_TEST_FLOATY=0.75\n"
+                "RAGRAM_TEST_PRESET=from-file\n"
+                "RAGRAM_TEST_EMPTY=\n"
+                "not an assignment\n",
+                encoding="utf-8",
+            )
+            os.environ["RAGRAM_TEST_PRESET"] = "from-shell"
+            loaded = load_env(path)
+            check(
+                "assignments parsed, blanks skipped",
+                "RAGRAM_TEST_EXPORTED" in loaded and "RAGRAM_TEST_EMPTY" not in loaded,
+            )
+            check("comment + junk lines skipped", len(loaded) == 7)
+            check("export prefix stripped", env_str("RAGRAM_TEST_EXPORTED") == "exported")
+            check(
+                "double quotes keep inner hash",
+                env_str("RAGRAM_TEST_QUOTED") == "has spaces and # hash",
+            )
+            check("single quotes preserved", env_str("RAGRAM_TEST_SINGLE") == "raw # value")
+            check("inline comment stripped", env_str("RAGRAM_TEST_INLINE") == "value")
+            check("shell env wins by default", env_str("RAGRAM_TEST_PRESET") == "from-shell")
+            check("env_int parses", env_int("RAGRAM_TEST_NUMERIC", 0) == 42)
+            check("env_float parses", env_float("RAGRAM_TEST_FLOATY", 0.0) == 0.75)
+            check("unset var -> default", env_str("RAGRAM_TEST_BLANK", "d") == "d")
+
+            load_env(path, override=True)
+            check("override=True replaces shell env", env_str("RAGRAM_TEST_PRESET") == "from-file")
+
+            os.environ["RAGRAM_TEST_BAD"] = "abc"
+            try:
+                env_int("RAGRAM_TEST_BAD", 7)
+                rejected = False
+            except ValueError:
+                rejected = True
+            check("env_int rejects non-numeric", rejected)
+
+            try:
+                load_env(Path(tmp) / "missing.env")
+                raised = False
+            except FileNotFoundError:
+                raised = True
+            check("missing explicit path raises FileNotFoundError", raised)
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 async def main() -> int:
     test_rrf_math()
     test_rrf_empty_streams()
     test_normalized_fusion()
     test_fuse_dispatch()
     test_config_validation()
+    test_envfile()
     await test_engine_pipeline()
     await test_empty_store()
     await test_reranker_fallback()

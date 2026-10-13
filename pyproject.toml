@@ -19,18 +19,34 @@ postgres = ["asyncpg>=0.29.0", "pgvector>=0.3.0"]
 cohere = ["httpx>=0.27.0"]
 # CrossEncoderReranker + SentenceTransformerEmbedder: local HuggingFace models
 local = ["sentence-transformers>=3.0.0"]
+# integrations.langchain: RagramRetriever (LangChain BaseRetriever)
+langchain = ["langchain-core>=0.3.0"]
+# integrations.llamaindex: RagramLlamaIndexRetriever (LlamaIndex BaseRetriever)
+llamaindex = ["llama-index-core>=0.11.0"]
+# integrations.generation: OpenAIGenerator / AnthropicGenerator
+#   (OllamaGenerator needs no extra — stdlib only)
+openai = ["openai>=1.40.0"]
+anthropic = ["anthropic>=0.34.0"]
+# examples/fastapi_app.py: run the REST demo (library itself never imports FastAPI)
+api = ["fastapi>=0.110.0", "uvicorn>=0.30.0"]
 all = [
     "asyncpg>=0.29.0",
     "pgvector>=0.3.0",
     "httpx>=0.27.0",
     "sentence-transformers>=3.0.0",
+    "langchain-core>=0.3.0",
+    "llama-index-core>=0.11.0",
+    "openai>=1.40.0",
+    "anthropic>=0.34.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.30.0",
 ]
 
 [tool.setuptools]
-py-modules = ["config", "embedding", "engine", "models", "prompts"]
+py-modules = ["config", "embedding", "engine", "envfile", "models", "prompts"]
 
 [tool.setuptools.packages.find]
-include = ["storage*", "search*", "rerank*"]
+include = ["storage*", "search*", "rerank*", "integrations*"]
 
 [tool.ruff]
 line-length = 100

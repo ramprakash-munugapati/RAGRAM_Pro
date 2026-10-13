@@ -37,7 +37,7 @@ class CohereReranker(Reranker):
         self,
         *,
         api_key: str | None = None,
-        model: str = "rerank-v3.5",
+        model: str | None = None,
         base_url: str = "https://api.cohere.com",
         api_key_env: str = "COHERE_API_KEY",
         timeout: float = 30.0,
@@ -55,7 +55,7 @@ class CohereReranker(Reranker):
             ) from exc
 
         self._api_key = key
-        self._model = model
+        self._model = model or os.environ.get("COHERE_MODEL") or "rerank-v3.5"
         self._timeout = timeout
         self._client: httpx.AsyncClient = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),

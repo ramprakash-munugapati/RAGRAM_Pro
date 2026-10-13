@@ -22,6 +22,7 @@ env/
 # Local environment / secrets
 .env
 .env.*
+!.env.example
 
 # OS
 Thumbs.db
