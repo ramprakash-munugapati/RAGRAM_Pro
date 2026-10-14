@@ -28,6 +28,12 @@ query ──┬── vector stream   (pgvector cosine / in-memory cosine)  ─�
 [Tests](#tests) · [Troubleshooting](#troubleshooting) · [Production checklist](#production-checklist) ·
 [Learning guide](docs/learn.md)
 
+**Want to explore the codebase itself?**
+[GitIngest](https://gitingest.com/ramprakash-munugapati/ragram_pro) — the whole repo as a
+single LLM-friendly text file (paste into your AI assistant) ·
+[GitDiagram](https://gitdiagram.com/ramprakash-munugapati/ragram_pro) — auto-generated
+architecture diagram of the source tree.
+
 ## Who this is for
 
 You already know the basics of RAG: split documents into chunks, embed them, run a
