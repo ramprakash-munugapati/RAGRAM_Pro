@@ -52,7 +52,7 @@ from .storage import (
     StorageError,
 )
 
-__version__ = "8.0.0"
+__version__ = "8.1.0"
 
 __all__ = [
     "BM25Index",
