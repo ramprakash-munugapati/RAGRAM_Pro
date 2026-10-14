@@ -17,6 +17,43 @@ query ──┬── vector stream   (pgvector cosine / in-memory cosine)  ─�
                                                      threshold filter ─► top_n ─► LLM prompt
 ```
 
+**Contents:** [Who this is for](#who-this-is-for) · [Install](#install) ·
+[Quickstart](#quickstart) · [Bringing your own data](#bringing-your-own-data) ·
+[How the pipeline works](#how-the-pipeline-works) ·
+[Detailed ingest / query flow](#detailed-ingest--query-flow) ·
+[Storage backends](#storage-backends) · [Embedders](#embedders) · [Rerankers](#rerankers) ·
+[Working with results](#working-with-results) · [Building the LLM prompt](#building-the-llm-prompt) ·
+[Integrations](#integrations) · [Edge-case behavior](#edge-case-behavior) ·
+[Demo reference](#demo-reference) · [Environment configuration](#environment-configuration) ·
+[Tests](#tests) · [Troubleshooting](#troubleshooting) · [Production checklist](#production-checklist)
+
+## Who this is for
+
+You already know the basics of RAG: split documents into chunks, embed them, run a
+similarity search, paste the winners into a prompt. If that pipeline already answers
+your questions reliably, you don't need this project.
+
+RAGRAM_Pro is for the next step — when plain vector search quietly misses:
+
+- **Exact tokens matter.** Error codes (`ECONNRESET`), order IDs (`INV-20491`),
+  function names, config keys, version strings (`v2.3.1-rc1`). Embeddings blur these;
+  the lexical stream finds them literally.
+- **Closest ≠ correct.** Cosine similarity ranks by meaning, not by whether the chunk
+  actually answers the question. A paragraph about "payment timeouts" can outrank the
+  one that names the escalation ladder.
+- **Users type keywords, not prose.** Real queries are often short and noun-heavy —
+  exactly where sparse retrieval wins.
+
+Hybrid search fixes the first and third; the cross-encoder reranker fixes the second by
+reading the query and each candidate together and scoring real relevance in `[0, 1]`.
+The dense stream still carries its share — paraphrases and synonym-only matches that
+contain none of your query words.
+
+**When you can skip it:** tiny corpora where plain vector search already scores well on
+your own test questions, or latency budgets too tight for a rerank pass (bounded here by
+`tune down candidate_limit`). Honest cost: two retrieval paths and one reranker model/API
+to operate instead of one vector index.
+
 ## Features
 
 - **Hybrid coordinator** — vector similarity and keyword full-text search execute concurrently
@@ -150,6 +187,78 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Everything is async by design. If your app doesn't already run an event loop, drive
+calls with `asyncio.run()` exactly as above — the LangChain adapter bridges sync and
+async callers for you automatically.
+
+---
+
+## Bringing your own data
+
+RAGRAM_Pro does **not** chunk documents — you do, with whatever splitter you already
+use (LangChain `RecursiveCharacterTextSplitter`, LlamaIndex `SentenceSplitter`, or a
+few lines of your own). You hand the engine a list of `Chunk` objects; everything else
+in this README works unchanged.
+
+Three rules:
+
+1. **`id` is the identity.** Indexing the same id again overwrites that chunk
+   completely (text, embedding, metadata), so use a *stable* id derived from the
+   source — `"policies/refunds.md#0"`, a content hash, your row's primary key.
+   Random/sequential ids make re-ingestion duplicate instead of update.
+2. **Changing your chunk sizes? Start a fresh table.** There is no delete API: if you
+   re-chunk with different boundaries, the old ids no longer match and stale rows
+   linger. `DROP TABLE ragram_chunks` (or point `table=` at a new name) and re-index.
+3. **`metadata` is provenance, not payload.** Whatever you put there
+   (`source`, `updated`, `department`, ...) is rendered into the evidence headers the
+   LLM sees (`[C1] relevance=0.91 | source=... | updated=...`) and copied into
+   LangChain/LlamaIndex metadata. Keys pass through untouched.
+
+End-to-end with your own text and a local LLM:
+
+```python
+import asyncio
+import os
+
+from config import FusionConfig
+from embedding import SentenceTransformerEmbedder      # 384-dim
+from engine import RagramFusionEngine
+from integrations import OllamaGenerator                # swap for OpenAI/Anthropic
+from models import Chunk
+from rerank import CrossEncoderReranker
+from storage import PostgresStorageEngine
+
+def chunk_my_documents(files: dict[str, str]) -> list[Chunk]:
+    """Your splitter goes here — this is the part RAGRAM deliberately leaves to you."""
+    chunks = []
+    for source, text in files.items():
+        for i, part in enumerate(split(text, size=800, overlap=150)):   # pseudo-code
+            chunks.append(Chunk(id=f"{source}#{i}", text=part,
+                                metadata={"source": source}))
+    return chunks
+
+async def main() -> None:
+    engine = RagramFusionEngine(
+        storage=PostgresStorageEngine(os.environ["DATABASE_URL"], dimensions=384),
+        embedder=SentenceTransformerEmbedder(),         # dimensions MUST match 384
+        reranker=CrossEncoderReranker(),                # pip install 'ragram-pro[local]'
+        config=FusionConfig(top_n=4, relevance_threshold=0.3),
+    )
+    async with engine:
+        await engine.index(chunk_my_documents(load_files()))
+
+        prompt = await engine.build_prompt("how do I roll back a failed deploy?")
+        answer = await OllamaGenerator().generate(prompt)   # or your own chat call
+        print(answer.answer)
+
+asyncio.run(main())
+```
+
+Prefer a framework? Skip the plumbing entirely — feed your splitter's output to
+`engine.index()` the same way, or use the LangChain / LlamaIndex retrievers under
+[Integrations](#integrations), which run the whole pipeline behind their standard
+`retrieve()` interface.
+
 ---
 
 ## How the pipeline works
@@ -166,7 +275,7 @@ Per query, `engine.search()` executes:
 1. **Embed the query** — `embedder.embed_query(query)`.
 2. **Dual-stream retrieval** — `storage.vector_search()` (cosine) and
    `storage.lexical_search()` (tsvector/BM25) run **concurrently**; either may return
-   `[]` or fail without failing the query (see [Edge cases](#edge-case--failure-behavior)).
+   `[]` or fail without failing the query (see [Edge cases](#edge-case-behavior)).
 3. **Fusion** — weighted RRF (default) or min-max normalization deduplicates by chunk id
    and produces `FusedChunk` entries sorted best-first.
 4. **Rerank** — `reranker.rerank()` scores every fused candidate against the raw query
@@ -388,6 +497,9 @@ large  = SentenceTransformerEmbedder("BAAI/bge-m3", device="cuda")
 - `embedder.dimensions` must match the Postgres `vector(dims)` column.
 - The embedder is used for **documents** (`embed_documents`) at index time and for the
   **query** (`embed_query`) at search time.
+- `HashingEmbedder` is for demos and tests only — its vectors are hash buckets, not
+  semantic meaning. Production results need a real model (`SentenceTransformerEmbedder`
+  or your own `Embedder` subclass).
 - Swap in any custom backend by subclassing `Embedder` (two async methods + `dimensions`).
 
 ---
@@ -615,7 +727,9 @@ individually absorbed, so hybrid queries can never fail *because* one retriever 
 
 ---
 
-## Demo reference (`app.py`)
+## Demo reference
+
+The repo-root `app.py` demo (driven by CLI flags and `.env`):
 
 ```powershell
 python app.py                       # memory storage + term-overlap reranker, zero deps
@@ -712,6 +826,25 @@ python -m pyflakes .                                             # lint
 ```
 
 All suites exit non-zero on failure, so they slot directly into CI.
+
+---
+
+## Troubleshooting
+
+Start every investigation with `result.stats` and the log line — they show exactly
+where results dropped (`vector_hits + lexical_hits → fused → reranked → kept`).
+
+| Symptom | What's happening | Fix |
+|---|---|---|
+| `result.is_empty` but the index has data | Look at stats: `vector_hits`/`lexical_hits` both `0` → query terms don't match (stopwords, language mismatch); hits `> 0` but `kept = 0` → threshold too high | Lower `relevance_threshold` per call, or `0` to see everything the reranker scored |
+| Postgres: `different vector dimensions` | `PostgresStorageEngine(dimensions=...)` ≠ embedder dimensions, or you changed the embedding model | Set `dimensions=embedder.dimensions`; changing models means a new table + full re-index |
+| Postgres: `extension "vector" does not exist` / permission denied | pgvector isn't installed or the role can't `CREATE EXTENSION` | `CREATE EXTENSION vector` as a superuser (or ask your admin), then retry |
+| Search works but feels slow | Either no HNSW index (sequential scan on PG < 15) or rerank cost | Check for the HNSW warning in logs; lower `candidate_limit` (rerank cost scales with it) |
+| Exact IDs / codes still miss | The lexical stream isn't matching: `tsconfig` stemming doesn't fit your content's language | Pass a matching `tsconfig` to `PostgresStorageEngine` (e.g. `simple` for code/IDs) |
+| Old chunks linger after re-chunking | Ids are identities; there is no delete API | `DROP TABLE ragram_chunks` (or new `table=`) and re-index |
+| Results look random | `HashingEmbedder` (hash buckets, not semantics) in use | `pip install sentence-transformers`, then `--embedder sbert` / `SentenceTransformerEmbedder()` |
+| Log: `reranker failed; falling back...` | Backend down or missing (HF model not downloaded, `COHERE_API_KEY` unset) | Install the model/extra or set the key; retrieval still returns fusion-ordered results meanwhile |
+| Threshold behaves "differently" per reranker | It does: term-overlap = % of query words present (0.3 → "at least 30% of query terms appear"); cross-encoder = calibrated relevance (junk ≈ 0, good ≈ 0.5–0.9) | Tune against your own questions using `stats.kept` and spot-checked scores; start at `0.3` |
 
 ---
 
