@@ -108,7 +108,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="RAGRAM_Pro demo API",
     description="Hybrid search (dense + sparse) + fusion + reranking as a service.",
-    version="8.1.0",
+    version="8.1.1",
     lifespan=lifespan,
 )
 
