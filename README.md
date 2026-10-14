@@ -19,13 +19,14 @@ query ──┬── vector stream   (pgvector cosine / in-memory cosine)  ─�
 
 **Contents:** [Who this is for](#who-this-is-for) · [Install](#install) ·
 [Quickstart](#quickstart) · [Bringing your own data](#bringing-your-own-data) ·
-[How the pipeline works](#how-the-pipeline-works) ·
+[How the pipeline works](#how-the-pipeline-works) · 
 [Detailed ingest / query flow](#detailed-ingest--query-flow) ·
 [Storage backends](#storage-backends) · [Embedders](#embedders) · [Rerankers](#rerankers) ·
 [Working with results](#working-with-results) · [Building the LLM prompt](#building-the-llm-prompt) ·
 [Integrations](#integrations) · [Edge-case behavior](#edge-case-behavior) ·
 [Demo reference](#demo-reference) · [Environment configuration](#environment-configuration) ·
-[Tests](#tests) · [Troubleshooting](#troubleshooting) · [Production checklist](#production-checklist)
+[Tests](#tests) · [Troubleshooting](#troubleshooting) · [Production checklist](#production-checklist) ·
+[Learning guide](docs/learn.md)
 
 ## Who this is for
 
@@ -53,6 +54,10 @@ contain none of your query words.
 your own test questions, or latency budgets too tight for a rerank pass (bounded here by
 `tune down candidate_limit`). Honest cost: two retrieval paths and one reranker model/API
 to operate instead of one vector index.
+
+**New to hybrid search, fusion or reranking?** The step-by-step refresher —
+embeddings, BM25, RRF with a worked example, cross-encoders, tuning — lives in
+[docs/learn.md](docs/learn.md).
 
 ## Features
 
